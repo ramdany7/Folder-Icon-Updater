@@ -6,84 +6,120 @@
 #include <fstream>
 #include <regex>
 
-static std::wstring GetIconResource(const std::wstring& iniFilePath) {
-    std::wifstream iniFile(iniFilePath.c_str()); // Convert std::wstring to const wchar_t*
+// Helper function to get the attributes of a file
+static DWORD GetFileAttributesSafe(const std::wstring& filePath) {
+    DWORD attributes = GetFileAttributes(filePath.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return 0; // No attributes (file may not exist)
+    }
+    return attributes;
+}
+
+// Helper function to set the attributes of a file
+static void SetFileAttributesSafe(const std::wstring& filePath, DWORD attributes) {
+    if (!SetFileAttributes(filePath.c_str(), attributes)) {
+        std::wcout << L"Failed to set attributes for " << filePath << std::endl;
+    }
+}
+
+// Function to extract IconResource and IconIndex from desktop.ini
+static std::pair<std::wstring, int> ParseIconResource(const std::wstring& iconResource) {
+    std::wregex iconRegex(L"^(.*?)(,(-?\\d+))?$");
+    std::wsmatch match;
+
+    if (std::regex_match(iconResource, match, iconRegex)) {
+        std::wstring path = match[1].str();
+        int index = match[3].matched ? std::stoi(match[3].str()) : 0;
+        return { path, index };
+    }
+
+    return { iconResource, 0 };
+}
+
+// Function to get IconResource and IconIndex from desktop.ini
+static std::pair<std::wstring, int> GetIconResource(const std::wstring& iniFilePath) {
+    std::wifstream iniFile(iniFilePath);
+    if (!iniFile.is_open()) {
+        std::wcout << L"Could not open desktop.ini file: " << iniFilePath << std::endl;
+        return { L"", 0 };
+    }
+
     std::wstring line;
-    std::wregex iconResourceRegex(L"^IconResource=(.*)$");
+    std::wregex iconResourceRegex(L"^IconResource=(.*)");
     std::wsmatch match;
 
     while (std::getline(iniFile, line)) {
-        if (std::regex_search(line, match, iconResourceRegex)) {
-            std::wstring iconResource = match[1].str();
-            // Remove ",0" suffix if it exists
-            std::wregex suffixRegex(L",(0)$");
-            iconResource = std::regex_replace(iconResource, suffixRegex, L"");
-            return iconResource;
+        if (std::regex_match(line, match, iconResourceRegex)) {
+            iniFile.close();
+            return ParseIconResource(match[1].str());
         }
     }
 
-    return L"";
+    iniFile.close();
+    return { L"", 0 };
 }
 
-static void UpdateFolderIcon(const std::wstring& folderPath, const std::wstring& iconPath) {
+// Function to update folder icon
+static void UpdateFolderIcon(const std::wstring& folderPath, const std::wstring& iconPath, int iconIndex) {
     SHFOLDERCUSTOMSETTINGS fcs = { 0 };
     fcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
     fcs.dwMask = FCSM_ICONFILE;
     fcs.pszIconFile = const_cast<LPWSTR>(iconPath.c_str());
-    fcs.iIconIndex = 0; // Set to 0 to avoid adding suffix
+    fcs.iIconIndex = iconIndex;
 
     HRESULT hr = SHGetSetFolderCustomSettings(&fcs, folderPath.c_str(), FCS_FORCEWRITE);
     if (SUCCEEDED(hr)) {
+        SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATH, folderPath.c_str(), NULL);
         std::wcout << L"Folder icon updated successfully for " << folderPath << std::endl;
     }
     else {
-        std::wcout << L"Failed to update folder icon for " << folderPath << std::endl;
+        std::wcout << L"Failed to update folder icon for " << folderPath << L", HRESULT: " << hr << std::endl;
     }
 }
 
-int wmain(int argc, wchar_t* argv[]) {
-    if (argc < 3 || argc > 5) {
-        std::wcout << L"Usage: FI-Updater.exe /F \"folderPath\" [/I \"iconPath\"]" << std::endl;
-        return 1;
-    }
+// Function to process a single folder
+static void ProcessFolder(const std::wstring& folderPath) {
+    std::wstring iniFilePath = folderPath + L"\\desktop.ini";
 
-    std::wstring folderPath;
-    std::wstring iconPath;
+    DWORD originalAttributes = GetFileAttributesSafe(iniFilePath);
 
-    for (int i = 1; i < argc; i += 2) {
-        std::wstring arg = argv[i];
-        if (arg == L"/F" || arg == L"/f") {
-            folderPath = argv[i + 1];
-        }
-        else if (arg == L"/I" || arg == L"/i") {
-            iconPath = argv[i + 1];
-        }
-    }
-
-    if (!folderPath.empty()) {
-        std::wstring iniFilePath = folderPath + L"\\desktop.ini";
-        if (std::filesystem::exists(iniFilePath)) {
-            if (iconPath.empty()) {
-                iconPath = GetIconResource(iniFilePath);
-            }
-
-            if (!iconPath.empty()) {
-                // Update the icon for the specified folder
-                UpdateFolderIcon(folderPath, iconPath);
-            }
-            else {
-                std::wcout << L"No value found for IconResource in desktop.ini." << std::endl;
-                return 1;
-            }
+    if (std::filesystem::exists(iniFilePath)) {
+        auto [iconPath, iconIndex] = GetIconResource(iniFilePath);
+        if (!iconPath.empty()) {
+            UpdateFolderIcon(folderPath, iconPath, iconIndex);
         }
         else {
-            std::wcout << L"desktop.ini not found in the specified folder." << std::endl;
-            return 1;
+            std::wcout << L"No valid IconResource found in desktop.ini for " << folderPath << std::endl;
+        }
+
+        // Restore original attributes
+        if (originalAttributes != 0) {
+            SetFileAttributesSafe(iniFilePath, originalAttributes);
         }
     }
     else {
-        std::wcout << L"Invalid arguments." << std::endl;
-        return 1;
+        std::wcout << L"desktop.ini not found in folder: " << folderPath << std::endl;
+    }
+}
+
+// Main program logic
+int wmain(int argc, wchar_t* argv[]) {
+    std::wstring folderPath;
+
+    // Parse command-line arguments
+    for (int i = 1; i < argc; ++i) {
+        std::wstring arg = argv[i];
+        if (arg == L"/f" && i + 1 < argc) {
+            folderPath = argv[++i];
+        }
+    }
+
+    // If folder path is specified, process it
+    if (!folderPath.empty()) {
+        ProcessFolder(folderPath);
+    }
+    else {
+        std::wcout << L"Usage: FolderIconUpdater.exe /f \"C:\\Path\\ThisFolder\"" << std::endl;
     }
 
     return 0;
