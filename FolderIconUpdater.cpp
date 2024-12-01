@@ -134,27 +134,6 @@ static std::wstring ReadAndValidateIconResource(const std::wstring& iniFilePath)
     return iconResource; // Return the valid IconResource string
 }
 
-// Function to update folder icon
-static bool UpdateFolderIcon(const std::wstring& folderPath, const std::wstring& iconPath, int iconIndex) {
-    SHFOLDERCUSTOMSETTINGS fcs = { 0 };
-    fcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
-    fcs.dwMask = FCSM_ICONFILE;
-    fcs.pszIconFile = const_cast<LPWSTR>(iconPath.c_str());
-
-    fcs.iIconIndex = iconIndex;
-
-    HRESULT hr = SHGetSetFolderCustomSettings(&fcs, folderPath.c_str(), FCS_FORCEWRITE);
-    if (SUCCEEDED(hr)) {
-        SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATH, folderPath.c_str(), NULL);
-        std::wcout << L"Folder icon updated successfully for \"" << GetFolderName(folderPath) << L"\"" << std::endl;
-        return true;
-    }
-    else {
-        std::wcerr << L"Failed to update folder icon for " << folderPath << L", HRESULT: " << hr << std::endl;
-        return false;
-    }
-}
-
 // Function to apply attributes to a single file
 static bool ApplyAttributes(const std::wstring& filePath, const std::wstring& attributeOption) {
     DWORD attributes = GetFileAttributes(filePath.c_str());
@@ -253,6 +232,40 @@ static int HandleAttributes(const std::wstring& folderPath, const std::wstring& 
     return 0;
 }
 
+// Function to update folder icon via SHChangeNotify
+static bool UpdateFolderIcon(const std::wstring& folderPath, const std::wstring& iconPath, int iconIndex) {
+    SHFOLDERCUSTOMSETTINGS fcs = { 0 };
+    fcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
+    fcs.dwMask = FCSM_ICONFILE;
+    fcs.pszIconFile = const_cast<LPWSTR>(iconPath.c_str());
+
+    fcs.iIconIndex = iconIndex;
+
+    HRESULT hr = SHGetSetFolderCustomSettings(&fcs, folderPath.c_str(), FCS_FORCEWRITE);
+
+    if (SUCCEEDED(hr)) {
+        SHChangeNotify(SHCNE_ATTRIBUTES, SHCNF_PATHW, folderPath.c_str(), NULL);
+        SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATH, folderPath.c_str(), NULL);
+        std::wcout << L"Folder icon updated successfully for \"" << GetFolderName(folderPath) << L"\"" << std::endl;
+        return true;
+    }
+    else {
+        std::wcerr << L"Failed to update folder icon for " << folderPath << L", HRESULT: " << hr << std::endl;
+        return false;
+    }
+}
+
+// Function to Desktop.ini UpdateTimestamp
+void UpdateTimestamp(const std::wstring& filePath) {
+    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft); // Current time
+        SetFileTime(hFile, NULL, NULL, &ft); // Update last write time
+        CloseHandle(hFile);
+    }
+}
+
 // Function to refresh or update folder icon
 static int ProcessFolder(const std::wstring& folderPath, const std::wstring& iconPath, int iconIndex, const std::wstring& attributeOption) {
     DWORD attributes = attributeOption.empty() ? INVALID_FILE_ATTRIBUTES : ParseAttributes(attributeOption);
@@ -287,6 +300,8 @@ static int ProcessFolder(const std::wstring& folderPath, const std::wstring& ico
         iconResource = iconPath + L"," + std::to_wstring(iconIndex);
 
         // Update the folder icon
+        UpdateTimestamp(folderPath + L"\\desktop.ini");
+        UpdateTimestamp(iconPath);
         UpdateFolderIcon(folderPath, iconPath, iconIndex);
 
         // Apply attributes to desktop.ini and icon file if specified
@@ -313,6 +328,7 @@ static int ProcessFolder(const std::wstring& folderPath, const std::wstring& ico
     }
     else {
         std::wcerr << L"No desktop.ini found. Use /f /i to assign a folder icon." << std::endl;
+        UpdateFolderIcon(folderPath, iconPath, iconIndex);
         return 1;
     }
 
