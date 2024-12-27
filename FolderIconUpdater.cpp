@@ -361,10 +361,11 @@ int wmain(int argc, wchar_t* argv[]) {
         PROCESS_INFORMATION pi;
 
         if (CreateProcessW(
-                NULL, &command[0], NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi)) {
+            NULL, &command[0], NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi)) {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
-        } else {
+        }
+        else {
             std::wcerr << L"Failed to open cmd.exe. Error code: " << GetLastError() << std::endl;
             return 3; // File or path not found
         }
@@ -436,25 +437,25 @@ int wmain(int argc, wchar_t* argv[]) {
                 return 2;
             }
         }
-    
 
-    // Ensure /f is specified
-    if (folderPath.empty()) {
-        std::wcerr << L"Error: /f must be specified. Use /? for help." << std::endl;
-        return 1;
-    }
 
-    // Ensure /n is not used without /i
-    if (!iconPath.empty() && iconIndex == -1 && std::filesystem::path(iconPath).extension() == L".dll") {
-        iconIndex = PromptIconIndex(iconPath);
-    }
-    else if (iconIndex != -1 && iconPath.empty()) {
-        std::wcerr << L"Error: /n requires both /f and /i. Use /? for help." << std::endl;
-        return 1;
-    }
+        // Ensure /f is specified
+        if (folderPath.empty()) {
+            std::wcerr << L"Error: /f must be specified. Use /? for help." << std::endl;
+            return 1;
+        }
 
-    // Process the folder
-    result = ProcessFolder(folderPath, iconPath, iconIndex, attributeOption);
+        // Ensure /n is not used without /i
+        if (!iconPath.empty() && iconIndex == -1 && std::filesystem::path(iconPath).extension() == L".dll") {
+            iconIndex = PromptIconIndex(iconPath);
+        }
+        else if (iconIndex != -1 && iconPath.empty()) {
+            std::wcerr << L"Error: /n requires both /f and /i. Use /? for help." << std::endl;
+            return 1;
+        }
+
+        // Process the folder
+        result = ProcessFolder(folderPath, iconPath, iconIndex, attributeOption);
     }
     catch (const std::exception& e) {
         std::wcerr << L"Unexpected error: " << Utf8ToWide(e.what()) << std::endl;
